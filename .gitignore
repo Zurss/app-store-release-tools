@@ -1,0 +1,9 @@
+node_modules/
+.asc-config.json
+.env
+.env.*
+*.p8
+*.pem
+*.key
+.DS_Store
+coverage/

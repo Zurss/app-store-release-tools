@@ -1,0 +1,49 @@
+:root {
+  color-scheme: dark;
+
+  --web-bg: #1a1a1a;
+  --web-panel: #2d2d2d;
+  --web-panel-hover: #353535;
+  --web-control: #3a3a3a;
+  --web-control-hover: #4a4a4a;
+  --web-control-disabled: #2a2a2a;
+  --web-input: #1a1a1a;
+  --web-divider: #222222;
+  --web-border-subtle: #333333;
+  --web-border: #555555;
+
+  --web-text-strong: #eeeeee;
+  --web-text: #d4d4d4;
+  --web-text-secondary: #aaaaaa;
+  --web-text-muted: #888888;
+  --web-text-disabled: #666666;
+  --web-on-accent: #ffffff;
+
+  --web-primary: #2563eb;
+  --web-primary-hover: #3b82f6;
+  --web-primary-pressed: #1d4ed8;
+  --web-primary-soft: rgb(37 99 235 / 30%);
+
+  --web-success-bg: #203a20;
+  --web-success-hover: #2a4a2a;
+  --web-success-border: #338833;
+  --web-success-text: #66ee66;
+
+  --web-danger-bg: #7f1d1d;
+  --web-danger-hover: #991b1b;
+  --web-danger-soft: #3a2020;
+  --web-danger-soft-hover: #4a2a2a;
+  --web-danger-border: #883333;
+  --web-danger-text: #ee6666;
+
+  --web-warning: #fb923c;
+  --web-warning-bg: #4a4a2a;
+  --web-warning-border: #aaaa88;
+
+  --web-overlay: rgb(0 0 0 / 50%);
+  --web-focus: #3b82f6;
+
+  --web-scrollbar-track: #2d2d2d;
+  --web-scrollbar-thumb: #555555;
+  --web-scrollbar-thumb-hover: #777777;
+}

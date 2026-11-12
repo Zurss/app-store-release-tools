@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="local-token" content="__LOCAL_TOKEN__">
+  <title>App Store Release Tools</title>
+  <link rel="icon" type="image/png" href="/logo.png">
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner"><img class="brand-mark" src="/logo.png" alt="" width="28" height="28"><strong>Release Tools</strong><span class="topbar-context">App Store Connect</span></div>
+  </header>
+
+  <main class="content">
+    <div class="heading"><h1>Что нового</h1><p>Подготовьте тексты для черновика.</p></div>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+    <section class="panel setup" aria-labelledby="setup-title">
+      <div class="panel-heading"><h2 id="setup-title">Приложение</h2></div>
+      <div class="fields">
+        <div class="app-field">
+          <span id="app-label" class="field-label">Приложение</span>
+          <div id="app-picker-field" class="app-picker-field">
+            <button id="app-picker" class="app-picker" type="button" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="app-list" aria-labelledby="app-label app-picker-value" disabled>
+              <span id="app-picker-icon" aria-hidden="true"></span><span id="app-picker-value" class="app-copy">Загрузка…</span><span class="app-chevron" aria-hidden="true">⌄</span>
+            </button>
+            <div id="app-list" class="app-list" role="listbox" aria-labelledby="app-label" hidden></div>
+          </div>
+          <select id="app-select" hidden disabled><option value="">Загрузка…</option></select>
+        </div>
+        <label>Платформа<select id="platform-select" disabled><option value="">Выберите приложение</option></select></label>
+      </div>
+      <div id="source-type-field" class="source-field" hidden><label>Источник<select id="source-type"><option value="version">Опубликованная версия</option><option value="clipboard">Таблица с переводами</option></select></label></div>
+      <div id="source-field" class="source-field" hidden><label>Опубликованная версия<select id="source-select"><option value="">Выберите версию</option></select></label></div>
+      <div id="prompt-field" class="source-field" hidden>
+        <div class="prompt-heading">
+          <div><p class="prompt-title">Переводы с нейросетью</p><p class="field-hint">Промпт с языками выбранного черновика.</p></div>
+          <button id="copy-prompt" class="secondary" type="button" disabled>Скопировать промпт</button>
+        </div>
+        <details id="prompt-details" class="prompt-details">
+          <summary>Просмотреть и изменить промпт</summary>
+          <label>Замените описание изменений<textarea id="prompt-output" rows="7"></textarea></label>
+        </details>
+      </div>
+      <div id="clipboard-field" class="source-field" hidden>
+        <label>Таблица переводов<textarea id="clipboard-input" rows="5" placeholder="Например:&#10;Язык | Текст&#10;русский | Исправлены ошибки&#10;английский (США) | Bug fixes"></textarea></label>
+        <p class="field-hint">Вставьте таблицу: языки строками или столбцами. Используйте названия языков из промпта.</p>
+      </div>
+      <div class="setup-footer"><button id="preview-button" class="primary" disabled>Сравнить тексты</button></div>
+    </section>
+
+    <section id="preview" class="panel review" hidden aria-labelledby="review-title">
+      <div class="review-heading"><h2 id="review-title">Проверьте изменения</h2><span id="list-count" class="count"></span></div>
+      <div class="version-strip"><div><span>Источник</span><strong id="source-version"></strong></div><span class="version-arrow" aria-hidden="true">→</span><div><span>Черновик</span><strong id="draft-version"></strong></div><span id="change-count" class="sr-only"></span></div>
+      <div id="comparison-table" class="table-scroll" role="region" aria-label="Сравнение текстов" tabindex="0">
+        <table class="changes">
+          <thead><tr><th scope="col">Язык</th><th scope="col">Сейчас в черновике</th><th scope="col">Будет после сохранения</th></tr></thead>
+          <tbody id="changes"></tbody>
+        </table>
+      </div>
+      <div id="skipped" class="skipped" hidden></div>
+      <div class="review-footer"><span>Изменится только «Что нового» в черновике</span><button id="apply-button" class="save" disabled>Сохранить в черновик</button></div>
+    </section>
+    <section id="result" class="result" aria-live="polite" hidden></section>
+  </main>
+
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-description">
+    <h2 id="confirm-title">Сохранить изменения?</h2>
+    <p id="confirm-description">Показанные тексты заменят «Что нового» в черновике.</p>
+    <div class="dialog-actions"><button id="cancel-save" class="secondary" autofocus>Отмена</button><button id="confirm-save" class="save">Сохранить</button></div>
+  </dialog>
+</body>
+</html>
