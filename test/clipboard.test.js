@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseClipboard } from '../src/clipboard.js';
-import { localeLabel, localeName, localeNames } from '../public/locales.js';
+import { parseClipboard as parseClipboardLanguage } from '../src/clipboard.js';
+import { localeLabel as labelLanguage, localeName as nameLanguage, russianLocaleNames as localeNames } from '../public/locales.js';
 
 test('распознаёт понятные названия с точными кодами локалей', () => {
   const table = 'Язык | Что нового\nанглийский (США) [en-US] | New\nрусский [ru] | Новое';
@@ -273,3 +273,7 @@ test('общее название английского не выбирает �
   assert.deepEqual(result.translations, []);
   assert.match(result.issues.join(' '), /нескольким доступным локалям/);
 });
+
+function parseClipboard(text, locales) { return parseClipboardLanguage(text, locales, 'ru'); }
+function localeName(locale) { return nameLanguage(locale, 'ru'); }
+function localeLabel(locale) { return labelLanguage(locale, 'ru'); }

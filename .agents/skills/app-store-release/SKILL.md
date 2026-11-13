@@ -1,18 +1,18 @@
 ---
 name: app-store-release
-description: Заполняет или проверяет поле «Что нового» в черновике App Store Connect через эту утилиту. Используй, когда пользователь просит скопировать заметки из опубликованной версии или применить таблицу переводов. Use for App Store release notes in this project.
+description: Fill or compare App Store Connect draft release notes using this project's CLI, from a published version or a translation table.
 ---
 
-# Что нового в App Store Connect
+# App Store release notes
 
-Используй существующую терминальную утилиту из корня репозитория: `npm start`. Ей нужны Node.js 22+, настроенный `.asc-config.json`, локальный ключ и права на приложение. Запускай в интерактивном терминале (TTY) и отвечай на подсказки последовательно.
+Run the existing CLI from the repository root with `npm start` in an interactive terminal (TTY). It requires Node.js 22+, a configured `.asc-config.json`, a local key, and access to the app. Reply in the user's language. The interface defaults to English; use `npm start -- --lang ru` or `npm start -- --lang en` when appropriate. This choice is saved locally and shared with the web interface.
 
-Не открывай, не читай и не выводи напрямую `.asc-config.json` и файлы ключей, не проси присылать их в чат. Утилите разрешено самой читать эти файлы при запуске. Ошибки чтения конфига пересказывай без дословного вывода: он может содержать фрагменты файла.
+Never directly open, read, or print `.asc-config.json` or key files, or ask the user to paste them into chat. The utility may read these files itself when running. Paraphrase configuration read errors instead of quoting them: they may contain file fragments.
 
-1. По списку утилиты найди указанное приложение; при неоднозначном названии уточни, используя bundle ID. Выбери нужную платформу. Не полагайся на номера из предыдущих запусков.
-2. Выбери источник по запросу пользователя: опубликованная версия или таблица переводов. Для текущей опубликованной версии используй вариант, отмеченный утилитой как текущий. Если определить его не удалось, не угадывай: попроси указать исходную версию. Если пользователь выбрал другую опубликованную версию, используй её.
-3. Для таблицы используй предоставленные переводы либо подготовь их из текста пользователя и языков, показанных в промпте утилиты. Введи таблицу и точку на отдельной строке. Не добавляй неподтверждённых изменений в перевод.
-4. Проверь показанные приложение, платформу, источник, версию черновика, языки и сравнение. Если план выходит за пределы запроса или вызывает сомнения, отмени сохранение и уточни. Если пользователь просил только сравнить, отмени сохранение.
-5. Если пользователь просил заполнить или сохранить и план соответствует запросу, подтверди сохранение в утилите. Сообщи фактическое число обновлений, пропуски и ошибки. При частичном сбое не утверждай, что сохранено всё; сообщи, какие языки не обновились.
+1. Find the requested app in the utility's current list. If its name is ambiguous, clarify using the bundle ID. Choose the requested platform. Do not reuse menu numbers from an earlier run.
+2. Choose the user's source: a published version or a translation table. For the current published version, use the entry identified as current by the utility. If it cannot identify one, ask the user for the source version rather than guessing. Honor an explicitly selected older version.
+3. For a table, use the provided translations or prepare them from the user's change description and the draft languages shown in the CLI prompt. Paste the table, ending with a dot on its own line. Preserve meaning and add no unverified changes.
+4. Review the app, platform, source, draft version, locales, and comparison. If the plan exceeds the user's request or is unclear, cancel saving and clarify. For a comparison-only request, cancel saving.
+5. If the user requested filling or saving and the plan matches that request, confirm saving in the CLI. Report actual updates, skips, and errors. On partial failure, name the failed locales and do not claim that everything was saved. Compare again before retrying.
 
-Утилита меняет только «Что нового» существующих локализаций черновика. Она не создаёт черновик, не выбирает билд и не отправляет релиз на проверку. Если черновика нет или настройка недоступна, сообщи об этом; не пытайся обходить ограничения другим запросом к API.
+The utility changes only “What's New” in existing draft localizations. It does not create a draft or localizations, select a build, or submit an app for review. If the draft is missing or setup is unavailable, report the blocker; do not bypass it with another API request.

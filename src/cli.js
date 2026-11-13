@@ -6,45 +6,48 @@ import { findDraft, draftLocales, findVersionPair, makePlan, makeClipboardPlan, 
 import { findStoreVersion } from './store-lookup.js';
 import { diffText } from '../public/diff.js';
 import { makePrompt } from '../public/prompt.js';
-import { localeLabel } from '../public/locales.js';
+import { localeLabel as displayLocale } from '../public/locales.js';
+import { t, getLanguage, withLanguage, AppError } from './i18n.js';
+import { configureLanguage, readLanguage } from './preferences.js';
+const localeLabel = (locale) => displayLocale(locale, getLanguage());
 
 export function formatDiff(parts, color, enabled = stdout.isTTY && !process.env.NO_COLOR && process.env.TERM !== 'dumb') {
   return parts.map((part) => part.changed && enabled ? `\x1b[${color}m${part.text}\x1b[0m` : part.text).join('');
 }
 
-async function choose(rl, title, items, label, defaultItem = null, defaultPrompt = 'Нажмите Enter для текущей версии или введите номер: ') {
-  if (!items.length) throw new Error(`Нет доступных вариантов: ${title}.`);
+async function choose(rl, title, items, label, defaultItem = null, defaultPrompt = t('chooseCurrent')) {
+  if (!items.length) throw new AppError('noOptions', { title });
   console.log(`\n${title}:`);
   items.forEach((item, index) => console.log(`  ${index + 1}. ${label(item)}`));
   while (true) {
-    const value = (await rl.question(defaultItem ? defaultPrompt : 'Введите номер и нажмите Enter: ')).trim();
+    const value = (await rl.question(defaultItem ? defaultPrompt : t('chooseNumber'))).trim();
     if (!value && defaultItem) return defaultItem;
     if (/^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= items.length) return items[Number(value) - 1];
-    console.log('Введите номер из списка.');
+    console.log(t('numberFromList'));
   }
 }
 
 function readTable(rl) {
-  console.log('\nВставьте таблицу с названиями языков. Для завершения введите точку на отдельной строке и нажмите Enter:');
+  console.log(t('pasteCli'));
   return new Promise((resolve, reject) => {
     const lines = [];
     const cleanup = () => { rl.removeListener('line', onLine); rl.removeListener('close', onClose); };
     const onLine = (line) => { if (line === '.') { cleanup(); resolve(lines.join('\n')); } else lines.push(line); };
-    const onClose = () => { cleanup(); reject(new Error('Ввод таблицы прерван.')); };
+    const onClose = () => { cleanup(); reject(new AppError('inputInterrupted')); };
     rl.on('line', onLine);
     rl.once('close', onClose);
   });
 }
 
-export async function runCli(api, rl, lookup = findStoreVersion, readClipboard = readTable) {
-  console.log('Получаем список приложений из App Store Connect...');
+async function runCliInternal(api, rl, lookup = findStoreVersion, readClipboard = readTable) {
+  console.log(t('loadingApps'));
   const apps = await api.apps();
-  const app = await choose(rl, 'Выберите приложение', apps, (a) => `${a.attributes.name} (${a.attributes.bundleId})`);
-  console.log('\nПолучаем версии приложения...');
+  const app = await choose(rl, t('chooseApp'), apps, (a) => `${a.attributes.name} (${a.attributes.bundleId})`);
+  console.log(t('loadingVersions'));
   const versions = await api.versions(app.id);
   const platforms = [...new Set(versions.map((v) => v.attributes.platform))];
-  const platform = await choose(rl, 'Выберите платформу', platforms, (p) => p);
-  const sourceType = await choose(rl, 'Выберите источник', ['version', 'clipboard'], (type) => type === 'version' ? 'Опубликованная версия' : 'Таблица с переводами', 'version', 'Нажмите Enter для опубликованной версии или введите номер: ');
+  const platform = await choose(rl, t('choosePlatform'), platforms, (p) => p);
+  const sourceType = await choose(rl, t('chooseSource'), ['version', 'clipboard'], (type) => type === 'version' ? t('publishedVersion') : t('translationTable'), 'version', t('defaultPublished'));
   let draft;
   let sourceId = null;
   let sourceLabel;
@@ -52,62 +55,70 @@ export async function runCli(api, rl, lookup = findStoreVersion, readClipboard =
   if (sourceType === 'clipboard') {
     draft = findDraft(versions, platform);
     const target = await api.localizations(draft.id);
-    console.log(`\nПромпт для нейросети:\n\n${makePrompt(draftLocales(target))}\n`);
+    console.log(t('aiPrompt', { prompt: makePrompt(draftLocales(target), getLanguage()) }));
     const text = await readClipboard(rl);
-    console.log('\nПолучаем тексты для сравнения...');
+    console.log(t('loadingTexts'));
     plan = makeClipboardPlan(text, await api.localizations(draft.id));
-    sourceLabel = 'вставленная таблица';
+    sourceLabel = t('pastedTableLower');
   } else {
     const pair = findVersionPair(versions, platform);
     draft = pair.draft;
     const current = await lookup(app.id, platform, pair.live);
-    if (!current) console.log('\nНе удалось определить текущую версию через App Store.');
+    if (!current) console.log(t('currentLookupFailed'));
     const live = await choose(
       rl,
-      'Выберите опубликованную версию (сначала недавно созданные)',
+      t('choosePublished'),
       pair.live,
-      (v) => `${v.attributes.versionString}${v.id === current?.id ? ' — текущая' : ''}${v.attributes.createdDate ? ` — создана ${v.attributes.createdDate.slice(0, 10)}` : ''}`,
+      (v) => `${v.attributes.versionString}${v.id === current?.id ? t('currentSuffix') : ''}${v.attributes.createdDate ? t('createdSuffix', { date: v.attributes.createdDate.slice(0, 10) }) : ''}`,
       current,
     );
     sourceId = live.id;
-    sourceLabel = `опубликованная версия ${live.attributes.versionString}`;
-    console.log('\nПолучаем тексты для сравнения...');
+    sourceLabel = t('publishedSource', { version: live.attributes.versionString });
+    console.log(t('loadingTexts'));
     const [source, target] = await Promise.all([api.localizations(live.id), api.localizations(draft.id)]);
-    if (!target.length) throw new Error('В черновике нет локализаций.');
+    if (!target.length) throw new AppError('emptyDraft');
     plan = makePlan(source, target);
   }
-  console.log(`\nПриложение: ${app.attributes.name} (${platform})`);
-  console.log(`Источник: ${sourceLabel}. Получатель: черновик ${draft.attributes.versionString}.`);
+  console.log(t('cliApp', { app: app.attributes.name, platform }));
+  console.log(t('cliTarget', { source: sourceLabel, draft: draft.attributes.versionString }));
   for (const c of plan.changes) {
     const diff = diffText(c.previous, c.text);
-    console.log(`\n--- ${localeLabel(c.locale)} ---\nСейчас в черновике:\n${formatDiff(diff.before, 31) || '(пусто)'}\nБудет после сохранения:\n${formatDiff(diff.after, 32)}`);
-    if (diff.approximate) console.log('Крупная подсветка из-за длины текста. Сравните тексты вручную.');
+    console.log(t('cliDiff', { locale: localeLabel(c.locale), before: formatDiff(diff.before, 31) || t('empty'), after: formatDiff(diff.after, 32) }));
+    if (diff.approximate) console.log(t('approximateDiff'));
   }
-  if (plan.unchanged.length) console.log(`\nБез изменений: ${plan.unchanged.map(localeLabel).join(', ')}`);
-  if (plan.missing.length) console.log(`Пропущены: нет текста ${sourceType === 'clipboard' ? 'в таблице' : 'в опубликованной версии'}: ${plan.missing.map(localeLabel).join(', ')}`);
-  if (plan.sourceOnly.length) console.log(`Пропущены: нет языка в черновике: ${plan.sourceOnly.map(localeLabel).join(', ')}`);
-  if (!plan.changes.length) return console.log('\nИзменения не требуются.');
-  console.log(`\nИзменится только поле «Что нового» в черновике для ${plan.changes.length} языков.`);
-  const answer = (await rl.question('Для сохранения введите y и нажмите Enter. Для отмены просто нажмите Enter: ')).trim().toLowerCase();
-  if (answer !== 'y' && answer !== 'yes') return console.log('Отменено. Данные не сохранены.');
+  if (plan.unchanged.length) console.log(t('unchanged', { locales: plan.unchanged.map(localeLabel).join(', ') }));
+  if (plan.missing.length) console.log(t('missingSource', { source: sourceType === 'clipboard' ? t('inTable') : t('inPublished'), locales: plan.missing.map(localeLabel).join(', ') }));
+  if (plan.sourceOnly.length) console.log(t('missingTarget', { locales: plan.sourceOnly.map(localeLabel).join(', ') }));
+  if (!plan.changes.length) return console.log(t('noChanges'));
+  console.log(t('onlyWhatsNew', { count: plan.changes.length }));
+  const answer = (await rl.question(t('confirmSave'))).trim().toLowerCase();
+  if (answer !== 'y' && answer !== 'yes') return console.log(t('cancelled'));
   const conflict = await planConflict(api, { appId: app.id, platform, sourceId, draftId: draft.id, plan });
   if (conflict) throw new Error(conflict);
-  console.log('\nСохраняем тексты...');
-  const result = await applyPlan(api, plan, (locale, error) => console.log(`${localeLabel(locale)}: ${error ? `ошибка — ${error.message}` : 'сохранено'}`));
-  console.log(`\nСохранено: ${result.updated}; ошибок: ${result.failed.length}.`);
+  console.log(t('savingTexts'));
+  const result = await applyPlan(api, plan, (locale, error) => console.log(`${localeLabel(locale)}: ${error ? t('cliSaveError', { message: error.message }) : t('saved')}`));
+  console.log(t('cliResult', { updated: result.updated, failed: result.failed.length }));
   if (result.failed.length) process.exitCode = 1;
 }
 
+export function runCli(api, rl, lookup = findStoreVersion, readClipboard = readTable, language = 'en') {
+  return withLanguage(language, () => runCliInternal(api, rl, lookup, readClipboard));
+}
+
 export async function main() {
-  if (!stdin.isTTY || !stdout.isTTY) throw new Error('Запустите команду в интерактивном терминале.');
-  const api = new AppStoreApi(await loadConfig());
-  const rl = createInterface({ input: stdin, output: stdout });
-  try { await runCli(api, rl); } finally { rl.close(); }
+  const language = await configureLanguage(process.argv.slice(2));
+  return withLanguage(language, async () => {
+    if (!stdin.isTTY || !stdout.isTTY) throw new AppError('ttyRequired');
+    const api = new AppStoreApi(await loadConfig());
+    const rl = createInterface({ input: stdin, output: stdout });
+    try { await runCliInternal(api, rl); } finally { rl.close(); }
+  });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error) => {
-    console.error(`Ошибка: ${error.message}`);
+  main().catch(async (error) => {
+    const language = error.language ?? await readLanguage();
+    withLanguage(language, () => console.error(t('error', { message: error.message })));
     process.exitCode = 1;
   });
 }

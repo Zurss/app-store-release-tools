@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { localeLabel, localeName, localeNames, UNKNOWN_LOCALE_NAME } from '../public/locales.js';
+import { localeLabel as labelLanguage, localeName as nameLanguage, russianLocaleNames as localeNames, unknownLocaleName } from '../public/locales.js';
 
 test('показывает только русские названия с регионом при необходимости', () => {
   assert.equal(localeLabel('en-US'), 'английский (США)');
@@ -30,3 +30,7 @@ test('неизвестные и некорректные коды получаю
     assert.equal(localeLabel(code), UNKNOWN_LOCALE_NAME);
   }
 });
+
+const UNKNOWN_LOCALE_NAME = unknownLocaleName('ru');
+function localeName(locale) { return nameLanguage(locale, 'ru'); }
+function localeLabel(locale) { return labelLanguage(locale, 'ru'); }

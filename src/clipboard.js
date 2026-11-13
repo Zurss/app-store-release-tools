@@ -1,4 +1,6 @@
-import { localeName, localeNames, UNKNOWN_LOCALE_NAME } from '../public/locales.js';
+import { localeName as displayLocale, localeNamesByLanguage, unknownLocaleName } from '../public/locales.js';
+import { t, getLanguage, withLanguage } from './i18n.js';
+const localeName = (locale) => displayLocale(locale, getLanguage());
 
 const HEADER_LANGUAGE = new Set(['language', 'language code', 'язык', 'язык код', 'код языка', 'локаль', 'locale', 'locale code', 'locales', 'lang']);
 const HEADER_TEXT = new Set(['text', 'translation', 'перевод', 'текст', 'value', 'what\'s new', 'whats new', 'что нового', 'release notes', 'release note', 'changelog']);
@@ -142,7 +144,7 @@ function parseTsv(text) {
       continue;
     }
     if (closedQuote && char !== '\t' && char !== '\r' && char !== '\n' && !/\s/.test(char)) {
-      return { error: 'Некорректные кавычки в TSV. Проверьте таблицу и скопируйте её повторно.' };
+      return { error: t('tsvQuotes') };
     }
     if (char === '"') {
       if (!atCellStart || cell.trim()) {
@@ -167,22 +169,22 @@ function parseTsv(text) {
       if (!closedQuote) cell += char;
     }
   }
-  if (quoted) return { error: 'Не закрыта кавычка в TSV. Проверьте таблицу и скопируйте её повторно.' };
+  if (quoted) return { error: t('tsvUnclosed') };
   if (cell.length || row.length) {
     row.push(cell.trim());
     rows.push(row);
   }
   const filtered = rows.filter((value) => value.some((part) => part.trim()));
   if (filtered.length && filtered.some((value) => value.length !== filtered[0].length)) {
-    return { error: 'В строках TSV разное число колонок. Проверьте разделители и повторите вставку.' };
+    return { error: t('tsvColumns') };
   }
   return { rows: filtered };
 }
 
 function parseRows(text) {
-  if (typeof text !== 'string') return { rows: [], format: null, error: 'Вставьте таблицу в виде Markdown или TSV.' };
+  if (typeof text !== 'string') return { rows: [], format: null, error: t('tableFormat') };
   const input = text.replace(/^\uFEFF/, '');
-  if (!input.trim()) return { rows: [], format: null, error: 'Таблица пуста.' };
+  if (!input.trim()) return { rows: [], format: null, error: t('tableEmpty') };
   let rows;
   let format;
   if (hasUnquotedTab(input)) {
@@ -192,16 +194,16 @@ function parseRows(text) {
     format = 'TSV';
   } else {
     const lines = input.replace(/\r\n?/g, '\n').split('\n').filter((line) => line.trim());
-    if (!lines.some((line) => line.includes('|'))) return { rows: [], format: null, error: 'Не найдены разделители таблицы. Используйте Markdown-таблицу или TSV.' };
+    if (!lines.some((line) => line.includes('|'))) return { rows: [], format: null, error: t('tableSeparators') };
     rows = lines.map(splitMarkdownRow);
     rows = rows.filter((row) => !row.every((cell) => /^:?-{3,}:?$/.test(cell)));
     format = 'Markdown';
   }
   if (rows.some((row) => row.length !== rows[0]?.length)) {
-    return { rows: [], format: null, error: 'В строках таблицы разное число колонок. Проверьте разделители и повторите вставку.' };
+    return { rows: [], format: null, error: t('tableColumns') };
   }
   if (rows[0]?.length < 2 || rows.length < 2) {
-    return { rows: [], format: null, error: 'Нужна таблица минимум из двух колонок и двух строк.' };
+    return { rows: [], format: null, error: t('tableSize') };
   }
   return { rows, format };
 }
@@ -216,8 +218,8 @@ function isTextHeader(value) {
 
 function nameIndex(targets) {
   const index = new Map();
-  for (const [locale, name] of [...Object.entries(localeNames), ...targets.map((locale) => [locale, localeName(locale)])]) {
-    if (name === UNKNOWN_LOCALE_NAME) continue;
+  for (const language of ['en', 'ru']) for (const [locale, name] of [...Object.entries(localeNamesByLanguage[language]), ...targets.map((locale) => [locale, displayLocale(locale, language)])]) {
+    if (name === unknownLocaleName(language)) continue;
     const key = normalizeLabel(name);
     if (!index.has(key)) index.set(key, new Map());
     index.get(key).set(localeParts(locale).normalized.toLowerCase(), locale);
@@ -227,7 +229,7 @@ function nameIndex(targets) {
 
 function ambiguousName(label, locales) {
   const names = [...new Set(locales.map(localeName))];
-  return `«${label}» подходит к нескольким доступным локалям (${names.join(', ')}). Укажите точное название языка и региона. Если названия совпадают, импорт по этому названию невозможен.`;
+  return t('ambiguousLanguage', { label: label, locales: names.join(', ') });
 }
 
 function sourceLocale(label, index) {
@@ -239,7 +241,7 @@ function sourceLocale(label, index) {
     if (locales.length > 1) return { recognized: true, error: ambiguousName(raw, locales) };
     return { canonical: locales[0], explicit: locales[0].toLowerCase() !== 'en', recognized: true };
   }
-  if (labelKey === normalizeLabel(UNKNOWN_LOCALE_NAME)) return { recognized: true, error: 'Неизвестный язык нельзя однозначно сопоставить. Укажите распознаваемое название языка.' };
+  if (['en', 'ru'].some((language) => labelKey === normalizeLabel(unknownLocaleName(language)))) return { recognized: true, error: t('unknownLanguage') };
   const alias = LANGUAGE_ALIASES.get(labelKey);
   if (alias) return { canonical: alias, explicit: alias.includes('-'), recognized: true };
   const annotated = raw.match(/^(.+?)\s*(?:\[([a-z]{2,3}(?:[-_][a-z0-9]{2,8})*)\]|\(([a-z]{2,3}(?:[-_][a-z0-9]{2,8})*)\))$/i);
@@ -250,8 +252,8 @@ function sourceLocale(label, index) {
     const named = sourceLocale(name, index);
     const consistent = !named.error && (named.recognized
       ? named.explicit ? named.canonical.toLowerCase() === canonical.toLowerCase() : localeParts(named.canonical).language === localeParts(canonical).language
-      : normalizeLabel(name) === normalizeLabel(localeName(canonical)));
-    if (!consistent) return { recognized: false, error: `Название «${name}» не соответствует языку «${localeName(canonical)}». Проверьте язык в таблице.` };
+      : ['en', 'ru'].some((language) => normalizeLabel(name) === normalizeLabel(displayLocale(canonical, language))));
+    if (!consistent) return { recognized: false, error: t('inconsistentLanguage', { name: name, locale: localeName(canonical) }) };
     return { canonical, explicit: true, recognized: true };
   }
   const code = raw.replaceAll('_', '-');
@@ -275,7 +277,7 @@ function targetList(targetLocales) {
 function resolveLocale(label, targets, index) {
   const source = sourceLocale(label, index);
   if (source.error) return { error: source.error };
-  if (!source.recognized) return { error: source.error || `Не удалось распознать язык «${String(label).trim()}». Укажите точное название языка.` };
+  if (!source.recognized) return { error: source.error || t('unrecognizedLanguage', { name: String(label).trim() }) };
   const candidates = targets.filter((target) => {
     const targetCode = String(target).trim().replaceAll('_', '-');
     if (source.explicit) return targetCode.toLowerCase() === source.canonical.toLowerCase();
@@ -293,7 +295,7 @@ function collect(entries, issues) {
     const prior = byLocale.get(entry.locale);
     if (prior) {
       prior.duplicate = true;
-      issues.push(`Для локали «${localeName(entry.locale)}» найдено несколько непустых переводов. Удалите дубликат и вставьте таблицу снова.`);
+      issues.push(t('duplicateTranslation', { locale: localeName(entry.locale) }));
     } else {
       byLocale.set(entry.locale, { ...entry, duplicate: false });
     }
@@ -302,11 +304,11 @@ function collect(entries, issues) {
 }
 
 /** Разбирает Markdown-таблицу или TSV в переводы только для существующих целевых локалей. */
-export function parseClipboard(text, targetLocales) {
+function parseClipboardInternal(text, targetLocales) {
   const parsed = parseRows(text);
   if (parsed.error) return { translations: [], issues: [parsed.error] };
   const targets = targetList(targetLocales);
-  if (!targets.length) return { translations: [], issues: ['В черновике не найдено доступных локалей. Обновите список локализаций и повторите вставку.'] };
+  if (!targets.length) return { translations: [], issues: [t('noTargetLocales')] };
 
   const index = nameIndex(targets);
   const isLocaleHeader = (value) => canBeLocaleHeader(value, index);
@@ -327,7 +329,7 @@ export function parseClipboard(text, targetLocales) {
     const couldAlsoBeVertical = horizontalLanguages && rows.every((row) => row.length === 2 && isLocaleHeader(row[0]));
     const incompleteHeader = rows[0].some(isLocaleHeader) && !rows.slice(1).some((row) => isLocaleHeader(row[0]));
     if (couldAlsoBeVertical || (!horizontalWithTextColumn && !horizontalLanguages && incompleteHeader)) {
-      return { translations: [], issues: ['Не удалось однозначно определить направление таблицы. Добавьте заголовок «язык / текст» для строк или отдельную строку заголовков языков для колонок.'] };
+      return { translations: [], issues: [t('tableOrientation')] };
     }
     if (horizontalWithTextColumn || horizontalLanguages) {
       orientation = 'horizontal';
@@ -341,7 +343,7 @@ export function parseClipboard(text, targetLocales) {
   if (orientation === 'vertical') {
     for (const row of rows.slice(startRow)) {
       if (row.length !== 2) {
-        issues.push('В таблице с языками по строкам ожидаются ровно две колонки: язык и текст. Удалите лишние колонки.');
+        issues.push(t('twoColumns'));
         continue;
       }
       const [label, ...textParts] = row;
@@ -358,7 +360,7 @@ export function parseClipboard(text, targetLocales) {
     for (const row of rows.slice(startRow)) {
       const values = columns.length === rows[0].length ? row : row.slice(1);
       if (values.length !== columns.length) {
-        issues.push('Число значений не совпадает с числом языков в заголовке. Проверьте таблицу и повторите вставку.');
+        issues.push(t('headerCount'));
         continue;
       }
       columns.forEach((label, columnIndex) => {
@@ -372,4 +374,8 @@ export function parseClipboard(text, targetLocales) {
   }
 
   return { translations: collect(entries, issues), issues: [...new Set(issues)], ...(skipped.length ? { skipped: [...new Set(skipped)] } : {}) };
+}
+
+export function parseClipboard(text, targetLocales, language = getLanguage()) {
+  return withLanguage(language, () => parseClipboardInternal(text, targetLocales));
 }

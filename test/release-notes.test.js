@@ -54,12 +54,12 @@ test('сортирует пропущенные, совпавшие и отсу�
 
 test('перечисляет неоднозначные локали в том же порядке', () => {
   const target = [locale('gb', 'en-GB', 'Old'), locale('us', 'en-US', 'Old')];
-  assert.throws(() => makeClipboardPlan('Language | Text\nEN | New', target), /английский \(США\), английский \(Великобритания\)/);
+  assert.throws(() => makeClipboardPlan('Language | Text\nEN | New', target), /English \(United States\), English \(United Kingdom\)/);
 });
 
 test('ошибки показывают названия языков без кодов', () => {
-  assert.throws(() => makeClipboardPlan('Язык | Текст\nанглийский (США) | New', [locale('ru', 'ru', 'Старый')]), /Нет в черновике: английский \(США\)/);
-  assert.throws(() => makePlan([], [locale('ru', 'ru', 123)]), /черновика: русский\./);
+  assert.throws(() => makeClipboardPlan('Язык | Текст\nанглийский (США) | New', [locale('ru', 'ru', 'Старый')]), /Not in the draft: English \(United States\)/);
+  assert.throws(() => makePlan([], [locale('ru', 'ru', 123)]), /draft text: Russian\./);
 });
 
 test('сохраняет каждый язык отдельно и сообщает о частичном отказе', async () => {

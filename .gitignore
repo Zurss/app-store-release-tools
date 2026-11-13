@@ -7,3 +7,5 @@ node_modules/
 *.key
 .DS_Store
 coverage/
+.crashlytics/
+.release-tools-preferences.json*

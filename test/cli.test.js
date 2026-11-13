@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatDiff, runCli } from '../src/cli.js';
+import { formatDiff, runCli as runCliLanguage } from '../src/cli.js';
 
 const version = (id, appVersionState, versionString) => ({ id, attributes: { platform: 'IOS', appVersionState, versionString } });
 const locale = (id, whatsNew) => ({ id, attributes: { locale: 'ru', whatsNew } });
@@ -89,4 +89,27 @@ test('терминал сравнивает и сохраняет таблицу
   await runCli(f.api, f.rl, async () => { throw new Error('Магазин не должен запрашиваться'); }, async () => 'Язык | Текст\nru | Перевод');
   assert.deepEqual(f.state.writes, [{ id: 'target', text: 'Перевод' }]);
   assert.match(output.join('\n'), /Промпт для нейросети:[\s\S]*локализации: русский\./);
+});
+
+function runCli(api, rl, lookup, clipboard) { return runCliLanguage(api, rl, lookup, clipboard, 'ru'); }
+
+for (const language of ['en', 'ru']) {
+  test(`CLI interaction, prompt and cancellation remain localized (${language})`, async (t) => {
+    const output = [];
+    t.mock.method(console, 'log', (...args) => output.push(args.join(' ')));
+    const f = fixture(['1', '1', '2', '']);
+    await runCliLanguage(f.api, f.rl, async () => null, async () => 'Language | Text\nRussian | Translation', language);
+    assert.deepEqual(f.state.writes, []);
+    assert.match(output.join('\n'), language === 'en' ? /AI prompt:[\s\S]*Russian\.[\s\S]*Cancelled/ : /Промпт для нейросети:[\s\S]*русский\.[\s\S]*Отменено/);
+    assert.match(f.state.prompts.at(-1), language === 'en' ? /To save, type y/ : /Для сохранения введите y/);
+  });
+}
+
+test('CLI defaults to English and preserves stale-draft protection', async (t) => {
+  const output = [];
+  t.mock.method(console, 'log', (text) => output.push(text));
+  const f = fixture(['1', '1', '', '', (state) => { state.text = 'changed'; return 'y'; }]);
+  await assert.rejects(runCliLanguage(f.api, f.rl, async () => f.current), /Draft texts have changed/);
+  assert.match(output.join('\n'), /Loading apps from App Store Connect/);
+  assert.deepEqual(f.state.writes, []);
 });

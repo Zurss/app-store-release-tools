@@ -5,6 +5,8 @@ import { runInNewContext } from 'node:vm';
 import { diffText } from '../public/diff.js';
 import { makePrompt } from '../public/prompt.js';
 import { localeName, localeLabel } from '../public/locales.js';
+import { translate } from '../public/web-i18n.js';
+import { translate as translateError } from '../public/i18n.js';
 
 class Element {
   constructor(tag = '') { this.tag = tag; this.options = []; this.children = []; this.value = ''; this.hidden = false; this.listeners = {}; this.attributes = {}; this._text = ''; }
@@ -16,6 +18,8 @@ class Element {
   removeAttribute(name) { delete this.attributes[name]; }
   dispatchEvent(event) { return this.listeners[event.type]?.(event); }
   contains(node) { return node === this || this.children.some((child) => child.contains?.(node)); }
+  showModal() { this.open = true; }
+  close() { this.open = false; }
   scrollIntoView() {}
   focus() { this.focused = true; }
   select() { this.selected = true; }
@@ -23,7 +27,7 @@ class Element {
   get textContent() { return this._text + this.children.map((child) => child.textContent).join(''); }
 }
 
-async function page(sourceId, changes = [], { copyFails = false, respond = () => undefined, apps = [{ id: '123', name: 'Игра', bundleId: 'example' }], selectApp = true } = {}) {
+async function page(sourceId, changes = [], { copyFails = false, respond = () => undefined, apps = [{ id: '123', name: 'Игра', bundleId: 'example' }], selectApp = true, language = 'ru', timers = { setTimeout, clearTimeout } } = {}) {
   const elements = new Map();
   const get = (id) => {
     if (!elements.has(id)) elements.set(id, new Element());
@@ -31,8 +35,18 @@ async function page(sourceId, changes = [], { copyFails = false, respond = () =>
   };
   for (const id of ['source-field', 'clipboard-field', 'prompt-field', 'source-type-field']) get(id).hidden = true;
   get('app-list').hidden = true;
+  get('loading-overlay').hidden = true;
   get('prompt-details').open = false;
   get('source-type').value = 'version';
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const translatedElements = [];
+  for (const match of html.matchAll(/<([a-z][a-z0-9-]*)\b([^>]*)>/gi)) {
+    if (!match[2].includes('data-i18n')) continue;
+    const id = match[2].match(/\bid="([^"]*)"/)?.[1];
+    const element = id ? get(id) : new Element(match[1]);
+    for (const attribute of match[2].matchAll(/([\w-]+)="([^"]*)"/g)) element.setAttribute(attribute[1], attribute[2]);
+    translatedElements.push(element);
+  }
   const requests = [];
   const fetch = async (path, options) => {
     const body = JSON.parse(options.body);
@@ -40,6 +54,7 @@ async function page(sourceId, changes = [], { copyFails = false, respond = () =>
     const override = await respond(path, body);
     if (override) return override;
     const response = {
+      '/api/language': { language: body.language },
       '/api/apps': { apps },
       '/api/versions': { platforms: ['IOS'] },
       '/api/sources': { sourceId, sources: [{ id: 'live', version: '1.0' }, { id: 'older', version: '0.9' }] },
@@ -48,17 +63,17 @@ async function page(sourceId, changes = [], { copyFails = false, respond = () =>
     }[path];
     return { ok: true, json: async () => response };
   };
-  const document = { addEventListener() {}, getElementById: get, querySelector: () => ({ content: 'token' }), createElement: (tag) => new Element(tag), createTextNode: (text) => { const node = new Element('#text'); node.textContent = text; return node; } };
+  const document = { documentElement: new Element('html'), addEventListener() {}, getElementById: get, querySelector: (selector) => ({ content: selector.includes('app-language') ? language : 'token' }), querySelectorAll: (selector) => translatedElements.filter((element) => element.getAttribute(selector.slice(1, -1))), createElement: (tag) => new Element(tag), createTextNode: (text) => { const node = new Element('#text'); node.textContent = text; return node; } };
   const Option = class { constructor(text, value) { this.text = text; this.value = value; } };
-  const script = (await readFile(new URL('../public/app.js', import.meta.url), 'utf8')).replace("import { diffText } from './diff.js';", '').replace("import { makePrompt } from './prompt.js';", '').replace("import { localeName, localeLabel } from './locales.js';", '');
+  const script = (await readFile(new URL('../public/app.js', import.meta.url), 'utf8')).replace("import { diffText } from './diff.js';", '').replace("import { makePrompt } from './prompt.js';", '').replace("import { localeName, localeLabel } from './locales.js';", '').replace("import { translate } from './web-i18n.js';", '').replace("import { translate as translateError } from './i18n.js';", '');
   const navigator = { clipboard: { writeText: async (text) => { if (copyFails) throw new Error('Clipboard unavailable'); get('copied-prompt').value = text; } } };
-  runInNewContext(script, { document, fetch, Option, diffText, makePrompt, localeName, localeLabel, navigator, Event });
+  runInNewContext(script, { document, fetch, Option, diffText, makePrompt, localeName, localeLabel, translate, translateError, navigator, Event, ...timers });
   await new Promise((resolve) => setImmediate(resolve));
   if (selectApp) {
     get('app-select').value = '123';
     await get('app-select').listeners.change();
   }
-  return { get, requests };
+  return { get, requests, document, translatedElements };
 }
 
 test('веб-страница выбирает текущую версию и сравнивает выбранную вручную', async () => {
@@ -147,7 +162,7 @@ for (const sourceType of ['version', 'clipboard']) {
     assert.equal(get('prompt-details').open, false);
     assert.equal(get('copy-prompt').disabled, false);
     assert.deepEqual(requests.filter(({ path }) => path === '/api/locales'), [
-      { path: '/api/locales', body: { appId: '123', platform: 'IOS' } },
+      { path: '/api/locales', body: { appId: '123', platform: 'IOS', language: 'ru' } },
     ]);
     await get('copy-prompt').listeners.click();
     assert.equal(get('copied-prompt').value, get('prompt-output').value);
@@ -233,7 +248,7 @@ test('смена платформы загружает языки её черн�
   await new Promise((resolve) => setImmediate(resolve));
   resolveLocales({ ok: true, json: async () => ({ locales: ['fr-CA'] }) });
   await loading;
-  assert.deepEqual(requests.filter(({ path }) => path === '/api/locales').at(-1).body, { appId: '123', platform: 'MAC_OS' });
+  assert.deepEqual(requests.filter(({ path }) => path === '/api/locales').at(-1).body, { appId: '123', platform: 'MAC_OS', language: 'ru' });
   assert.match(get('prompt-output').value, /французский \(Канада\)/);
   assert.doesNotMatch(get('prompt-output').value, /английский|русский/);
   assert.equal(get('copy-prompt').disabled, false);
@@ -317,4 +332,235 @@ test('клик выбирает приложение, а пустой списо
   assert.equal(get('app-picker').disabled, false);
   const empty = await page('live', [], { apps: [], selectApp: false });
   assert.equal(empty.get('app-picker').disabled, true);
+});
+
+async function switchLanguage(get, language) {
+  get('language-select').value = language;
+  await get('language-select').listeners.change();
+}
+
+test('интерфейс использует EN по умолчанию и переводит подписи, aria и подсказки', async () => {
+  const { get, document, translatedElements, requests } = await page('live', [], { language: '__APP_LANGUAGE__' });
+  assert.equal(document.documentElement.lang, 'en');
+  assert.equal(get('preview-button').textContent, 'Compare texts');
+  assert.equal(get('language-select').getAttribute('aria-label'), 'Interface language');
+  assert.match(get('clipboard-input').placeholder, /Language \| Text/);
+  assert.ok(translatedElements.find((element) => element.getAttribute('data-i18n') === 'heading').textContent.includes('New'));
+  assert.ok(requests.every(({ body }) => body.language === 'en'));
+  await switchLanguage(get, 'ru');
+  assert.equal(document.documentElement.lang, 'ru');
+  assert.equal(get('preview-button').textContent, 'Сравнить тексты');
+  assert.equal(get('language-select').getAttribute('aria-label'), 'Язык интерфейса');
+  assert.equal(get('comparison-table').getAttribute('aria-label'), 'Сравнение текстов');
+  assert.match(get('clipboard-input').placeholder, /Язык \| Текст/);
+  assert.deepEqual(requests.at(-1), { path: '/api/language', body: { language: 'ru' } });
+});
+
+test('смена языка сохраняет сравнение, выбор и введённые тексты без повторного чтения локалей', async () => {
+  const { get, requests } = await page('live', [{ locale: 'ru', previous: '', text: 'Новый текст' }], { language: 'en' });
+  get('prompt-output').value = 'My edited prompt';
+  get('prompt-output').listeners.input();
+  get('clipboard-input').value = 'Language | Text\nRussian | New text';
+  get('source-select').value = 'older';
+  await get('preview-button').listeners.click();
+  const before = requests.length;
+  await switchLanguage(get, 'ru');
+  assert.equal(get('prompt-output').value, 'My edited prompt');
+  assert.equal(get('clipboard-input').value, 'Language | Text\nRussian | New text');
+  assert.equal(get('app-select').value, '123');
+  assert.equal(get('platform-select').value, 'IOS');
+  assert.equal(get('source-select').value, 'older');
+  assert.equal(get('preview').hidden, false);
+  assert.equal(get('apply-button').disabled, false);
+  assert.equal(get('changes').children[0].children[0].textContent, 'русский');
+  assert.equal(get('changes').children[0].children[1].textContent, '(пусто)');
+  assert.equal(get('list-count').textContent, 'Изменений: 1');
+  assert.deepEqual(requests.slice(before).map(({ path }) => path), ['/api/language']);
+  assert.equal(requests.filter(({ path }) => path === '/api/locales').length, 1);
+  await switchLanguage(get, 'en');
+  assert.equal(get('prompt-output').value, 'My edited prompt');
+  assert.equal(get('changes').children[0].children[0].textContent, 'Russian');
+  assert.equal(get('list-count').textContent, 'Changes: 1');
+  assert.equal(requests.some(({ path }) => path === '/api/apply'), false);
+});
+
+test('неизменённый промпт переводится из кэша и статус копирования меняет язык', async () => {
+  const { get, requests } = await page('live', [], { language: 'en' });
+  const original = get('prompt-output').value;
+  assert.equal(original, makePrompt(['en-US', 'ru'], 'en'));
+  await get('copy-prompt').listeners.click();
+  assert.equal(get('notice').textContent, 'Prompt copied.');
+  await switchLanguage(get, 'ru');
+  assert.equal(get('notice').textContent, 'Промпт скопирован.');
+  assert.equal(get('prompt-output').value, makePrompt(['en-US', 'ru'], 'ru'));
+  await switchLanguage(get, 'en');
+  assert.equal(get('prompt-output').value, original);
+  assert.equal(requests.filter(({ path }) => path === '/api/locales').length, 1);
+});
+
+test('ошибка сохранения языка возвращает прежний интерфейс и сохраняет готовый план', async () => {
+  const { get, requests, document } = await page('live', [{ locale: 'ru', previous: '', text: 'Text' }], {
+    language: 'en', respond: (path) => path === '/api/language'
+      ? { ok: false, json: async () => ({ error: 'Settings unavailable' }) } : undefined,
+  });
+  await get('preview-button').listeners.click();
+  await switchLanguage(get, 'ru');
+  assert.equal(document.documentElement.lang, 'en');
+  assert.equal(get('language-select').value, 'en');
+  assert.equal(get('language-select').disabled, false);
+  assert.equal(get('preview').hidden, false);
+  assert.equal(get('apply-button').disabled, false);
+  assert.equal(get('notice').className, 'notice error');
+  assert.match(get('notice').textContent, /Could not save.*restored/);
+  assert.equal(requests.some(({ path }) => path === '/api/apply'), false);
+});
+
+test('отложенное сравнение использует новый язык, а устаревшее сравнение не восстанавливает план', async () => {
+  let resolvePreview;
+  const { get } = await page('live', [], { language: 'en', respond: (path) => path === '/api/preview'
+    ? new Promise((resolve) => { resolvePreview = resolve; }) : undefined });
+  const plan = { planId: 'old', source: '1.0', draft: '1.1', changes: [{ locale: 'ru', previous: '', text: 'X' }], unchanged: [], missing: [], sourceOnly: [] };
+  const pending = get('preview-button').listeners.click();
+  await switchLanguage(get, 'ru');
+  resolvePreview({ ok: true, json: async () => plan });
+  await pending;
+  assert.equal(get('changes').children[0].children[0].textContent, 'русский');
+  const stale = get('preview-button').listeners.click();
+  get('source-select').value = 'older';
+  get('source-select').listeners.change();
+  resolvePreview({ ok: true, json: async () => plan });
+  await stale;
+  assert.equal(get('preview').hidden, true);
+  assert.equal(get('apply-button').disabled, true);
+});
+
+test('ответ старого списка версий не заменяет источник выбранного приложения', async () => {
+  let resolveSources;
+  const { get } = await page('live', [], { language: 'en', respond: (path, body) => path === '/api/sources' && body.appId === '456'
+    ? new Promise((resolve) => { resolveSources = resolve; }) : undefined });
+  get('app-select').value = '456';
+  const old = get('app-select').listeners.change();
+  await new Promise((resolve) => setImmediate(resolve));
+  get('app-select').value = '789';
+  await get('app-select').listeners.change();
+  resolveSources({ ok: true, json: async () => ({ sourceId: 'stale', sources: [{ id: 'stale', version: '0.1' }] }) });
+  await old;
+  assert.equal(get('source-select').value, 'live');
+  assert.equal(get('source-select').options.some(({ value }) => value === 'stale'), false);
+  assert.equal(get('preview-button').disabled, false);
+});
+
+test('подробности ошибки Apple сохраняются, а статусы частичного сохранения переводятся', async () => {
+  const { get, requests } = await page('live', [{ locale: 'ru', previous: '', text: 'Text' }], {
+    language: 'en', respond: (path) => path === '/api/apply'
+      ? { ok: true, json: async () => ({ updated: 1, failed: [{ locale: 'ru', error: 'Apple: field is locked' }] }) } : undefined,
+  });
+  await get('preview-button').listeners.click();
+  get('apply-button').listeners.click();
+  assert.equal(get('confirm-dialog').open, true);
+  get('cancel-save').listeners.click();
+  assert.equal(requests.some(({ path }) => path === '/api/apply'), false);
+  get('apply-button').listeners.click();
+  await get('confirm-save').listeners.click();
+  assert.match(get('result').textContent, /Saved: 1.*Russian.*Apple: field is locked/);
+  await switchLanguage(get, 'ru');
+  assert.match(get('result').textContent, /Сохранено: 1.*русский.*Apple: field is locked/);
+  assert.equal(requests.filter(({ path }) => path === '/api/apply').length, 1);
+  assert.equal(get('apply-button').disabled, true);
+});
+
+test('выбор языка блокируется до сохранения настройки и не допускает перестановки ответов', async () => {
+  let resolveLanguage;
+  const { get, document, requests } = await page('live', [], { language: 'en', respond: (path) => path === '/api/language'
+    ? new Promise((resolve) => { resolveLanguage = resolve; }) : undefined });
+  const saving = switchLanguage(get, 'ru');
+  assert.equal(document.documentElement.lang, 'ru');
+  assert.equal(get('language-select').disabled, true);
+  await switchLanguage(get, 'en');
+  assert.equal(requests.filter(({ path }) => path === '/api/language').length, 1);
+  resolveLanguage({ ok: true, json: async () => ({ language: 'ru' }) });
+  await saving;
+  assert.equal(document.documentElement.lang, 'ru');
+  assert.equal(get('language-select').disabled, false);
+});
+
+test('ошибка сохранения не оживляет устаревший план при смене языка и переводит причины', async () => {
+  const { get, requests } = await page('live', [{ locale: 'ru', previous: '', text: 'Text' }], {
+    language: 'en', respond: (path) => path === '/api/apply'
+      ? { ok: false, json: async () => ({ error: 'The preview is stale.', errorKey: 'stalePreview', errorParams: {} }) } : undefined,
+  });
+  await get('preview-button').listeners.click();
+  await get('confirm-save').listeners.click();
+  assert.equal(get('apply-button').disabled, true);
+  assert.match(get('notice').textContent, /preview is stale/);
+  await switchLanguage(get, 'ru');
+  assert.equal(get('apply-button').disabled, true);
+  assert.ok(get('notice').textContent.startsWith(translateError('ru', 'stalePreview')));
+  await get('confirm-save').listeners.click();
+  assert.equal(requests.filter(({ path }) => path === '/api/apply').length, 1);
+});
+
+function fakeTimers() {
+  const pending = new Map();
+  let next = 0;
+  return {
+    setTimeout(callback, delay) { const id = ++next; pending.set(id, { callback, delay }); return id; },
+    clearTimeout(id) { pending.delete(id); },
+    fire() { const entries = [...pending.values()]; pending.clear(); for (const entry of entries) { assert.equal(entry.delay, 250); entry.callback(); } },
+    count() { return pending.size; },
+  };
+}
+
+test('индикатор загрузки появляется с задержкой и скрывается после ошибки', async () => {
+  const timers = fakeTimers();
+  let rejectPreview;
+  const { get } = await page('live', [], { language: 'en', timers, respond: (path) => path === '/api/preview'
+    ? new Promise((resolve, reject) => { rejectPreview = reject; }) : undefined });
+  assert.equal(timers.count(), 0);
+  const pending = get('preview-button').listeners.click();
+  assert.equal(get('loading-overlay').hidden, true);
+  assert.equal(get('notice').hidden, true);
+  assert.equal(get('loading-text').textContent, 'Loading versions and texts…');
+  timers.fire();
+  assert.equal(get('loading-overlay').hidden, false);
+  assert.equal(get('main').inert, true);
+  assert.equal(get('topbar').inert, true);
+  rejectPreview(new Error('Example failure'));
+  await pending;
+  assert.equal(get('loading-overlay').hidden, true);
+  assert.equal(get('main').inert, false);
+  assert.equal(get('topbar').inert, false);
+  assert.match(get('notice').textContent, /Example failure/);
+});
+
+test('быстрая загрузка не показывает индикатор и не сдвигает уведомление', async () => {
+  const timers = fakeTimers();
+  const { get } = await page('live', [], { timers });
+  await get('preview-button').listeners.click();
+  assert.equal(timers.count(), 0);
+  timers.fire();
+  assert.equal(get('loading-overlay').hidden, true);
+  assert.equal(get('notice').textContent, 'Изменения не требуются.');
+});
+
+test('индикатор сохранения блокирует интерфейс и скрывается при частичной ошибке', async () => {
+  const timers = fakeTimers();
+  let resolveSave;
+  const { get } = await page('live', [{ locale: 'ru', previous: 'Старый', text: 'Новый' }], {
+    timers,
+    respond: (path) => path === '/api/apply' ? new Promise((resolve) => { resolveSave = resolve; }) : undefined,
+  });
+  await get('preview-button').listeners.click();
+  get('apply-button').listeners.click();
+  const saving = get('confirm-save').listeners.click();
+  assert.match(get('loading-text').textContent, /Сохран/);
+  timers.fire();
+  assert.equal(get('loading-overlay').hidden, false);
+  assert.equal(get('apply-button').disabled, true);
+  resolveSave({ ok: true, json: async () => ({ updated: 0, failed: [{ locale: 'ru', error: 'Example failure' }] }) });
+  await saving;
+  assert.equal(get('loading-overlay').hidden, true);
+  assert.equal(get('main').inert, false);
+  assert.equal(get('result').className, 'result error');
+  assert.match(get('result').textContent, /Example failure/);
 });

@@ -1,9 +1,10 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="local-token" content="__LOCAL_TOKEN__">
+  <meta name="app-language" content="__APP_LANGUAGE__">
   <title>App Store Release Tools</title>
   <link rel="icon" type="image/png" href="/logo.png">
   <link rel="stylesheet" href="/theme.css">
@@ -11,67 +12,74 @@
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar-inner"><img class="brand-mark" src="/logo.png" alt="" width="28" height="28"><strong>Release Tools</strong><span class="topbar-context">App Store Connect</span></div>
+  <header id="topbar" class="topbar">
+    <div class="topbar-inner"><img class="brand-mark" src="/logo.png" alt="" width="36" height="36"><strong>Release Tools</strong><span class="topbar-context">App Store Connect</span><label class="language-control"><span class="sr-only" data-i18n="interfaceLanguage">Interface language</span><select id="language-select" aria-label="Interface language" data-i18n-aria="interfaceLanguage"><option value="en" lang="en">EN</option><option value="ru" lang="ru">RU</option></select></label></div>
   </header>
 
-  <main class="content">
-    <div class="heading"><h1>Что нового</h1><p>Подготовьте тексты для черновика.</p></div>
+  <main id="main" class="content">
+    <div class="heading"><h1 data-i18n="heading">What’s New</h1><p data-i18n="subtitle">Prepare release notes for the draft.</p></div>
     <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
 
     <section class="panel setup" aria-labelledby="setup-title">
-      <div class="panel-heading"><h2 id="setup-title">Приложение</h2></div>
+      <div class="panel-heading"><h2 id="setup-title" data-i18n="app">App</h2></div>
       <div class="fields">
         <div class="app-field">
-          <span id="app-label" class="field-label">Приложение</span>
+          <span id="app-label" class="field-label" data-i18n="app">App</span>
           <div id="app-picker-field" class="app-picker-field">
             <button id="app-picker" class="app-picker" type="button" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="app-list" aria-labelledby="app-label app-picker-value" disabled>
-              <span id="app-picker-icon" aria-hidden="true"></span><span id="app-picker-value" class="app-copy">Загрузка…</span><span class="app-chevron" aria-hidden="true">⌄</span>
+              <span id="app-picker-icon" aria-hidden="true"></span><span id="app-picker-value" class="app-copy">Loading…</span><span class="app-chevron" aria-hidden="true">⌄</span>
             </button>
             <div id="app-list" class="app-list" role="listbox" aria-labelledby="app-label" hidden></div>
           </div>
-          <select id="app-select" hidden disabled><option value="">Загрузка…</option></select>
+          <select id="app-select" hidden disabled><option value="" data-i18n="loading">Loading…</option></select>
         </div>
-        <label>Платформа<select id="platform-select" disabled><option value="">Выберите приложение</option></select></label>
+        <label><span data-i18n="platform">Platform</span><select id="platform-select" disabled><option value="" data-i18n="chooseApp">Choose an app</option></select></label>
       </div>
-      <div id="source-type-field" class="source-field" hidden><label>Источник<select id="source-type"><option value="version">Опубликованная версия</option><option value="clipboard">Таблица с переводами</option></select></label></div>
-      <div id="source-field" class="source-field" hidden><label>Опубликованная версия<select id="source-select"><option value="">Выберите версию</option></select></label></div>
+      <div id="source-type-field" class="source-field" hidden><label><span data-i18n="source">Source</span><select id="source-type"><option value="version" data-i18n="published">Published version</option><option value="clipboard" data-i18n="tableSource">Translation table</option></select></label></div>
+      <div id="source-field" class="source-field" hidden><label><span data-i18n="published">Published version</span><select id="source-select"><option value="" data-i18n="chooseVersion">Choose a version</option></select></label></div>
       <div id="prompt-field" class="source-field" hidden>
         <div class="prompt-heading">
-          <div><p class="prompt-title">Переводы с нейросетью</p><p class="field-hint">Промпт с языками выбранного черновика.</p></div>
-          <button id="copy-prompt" class="secondary" type="button" disabled>Скопировать промпт</button>
+          <div><p class="prompt-title" data-i18n="promptTitle">Translate with AI</p><p class="field-hint" data-i18n="promptHint">A prompt with the languages of the selected draft.</p></div>
+          <button id="copy-prompt" class="secondary" type="button" data-i18n="copyPrompt" disabled>Copy prompt</button>
         </div>
         <details id="prompt-details" class="prompt-details">
-          <summary>Просмотреть и изменить промпт</summary>
-          <label>Замените описание изменений<textarea id="prompt-output" rows="7"></textarea></label>
+          <summary data-i18n="editPrompt">View and edit prompt</summary>
+          <label><span data-i18n="replaceChanges">Replace the description of changes</span><textarea id="prompt-output" rows="7"></textarea></label>
         </details>
       </div>
       <div id="clipboard-field" class="source-field" hidden>
-        <label>Таблица переводов<textarea id="clipboard-input" rows="5" placeholder="Например:&#10;Язык | Текст&#10;русский | Исправлены ошибки&#10;английский (США) | Bug fixes"></textarea></label>
-        <p class="field-hint">Вставьте таблицу: языки строками или столбцами. Используйте названия языков из промпта.</p>
+        <label><span data-i18n="translationTable">Translation table</span><textarea id="clipboard-input" rows="5" data-i18n-placeholder="tablePlaceholder" placeholder="For example:&#10;Language | Text&#10;Russian | Bug fixes&#10;English (United States) | Bug fixes"></textarea></label>
+        <p class="field-hint" data-i18n="tableHint">Paste a table with languages in rows or columns. Use the language names from the prompt.</p>
       </div>
-      <div class="setup-footer"><button id="preview-button" class="primary" disabled>Сравнить тексты</button></div>
+      <div class="setup-footer"><button id="preview-button" class="primary" data-i18n="compare" disabled>Compare texts</button></div>
     </section>
 
     <section id="preview" class="panel review" hidden aria-labelledby="review-title">
-      <div class="review-heading"><h2 id="review-title">Проверьте изменения</h2><span id="list-count" class="count"></span></div>
-      <div class="version-strip"><div><span>Источник</span><strong id="source-version"></strong></div><span class="version-arrow" aria-hidden="true">→</span><div><span>Черновик</span><strong id="draft-version"></strong></div><span id="change-count" class="sr-only"></span></div>
-      <div id="comparison-table" class="table-scroll" role="region" aria-label="Сравнение текстов" tabindex="0">
+      <div class="review-heading"><h2 id="review-title" data-i18n="review">Review changes</h2><span id="list-count" class="count"></span></div>
+      <div class="version-strip"><div><span data-i18n="source">Source</span><strong id="source-version"></strong></div><span class="version-arrow" aria-hidden="true">→</span><div><span data-i18n="draft">Draft</span><strong id="draft-version"></strong></div><span id="change-count" class="sr-only"></span></div>
+      <div id="comparison-table" class="table-scroll" role="region" aria-label="Text comparison" data-i18n-aria="comparison" tabindex="0">
         <table class="changes">
-          <thead><tr><th scope="col">Язык</th><th scope="col">Сейчас в черновике</th><th scope="col">Будет после сохранения</th></tr></thead>
+          <thead><tr><th scope="col" data-i18n="language">Language</th><th scope="col" data-i18n="previous">Currently in draft</th><th scope="col" data-i18n="next">After saving</th></tr></thead>
           <tbody id="changes"></tbody>
         </table>
       </div>
       <div id="skipped" class="skipped" hidden></div>
-      <div class="review-footer"><span>Изменится только «Что нового» в черновике</span><button id="apply-button" class="save" disabled>Сохранить в черновик</button></div>
+      <div class="review-footer"><span data-i18n="onlyWhatsNew">Only What’s New in the draft will change</span><button id="apply-button" class="save" data-i18n="saveDraft" disabled>Save to draft</button></div>
     </section>
     <section id="result" class="result" aria-live="polite" hidden></section>
   </main>
 
+  <div id="loading-overlay" class="loading-overlay" role="status" aria-live="polite" hidden>
+    <div class="loading-card">
+      <div class="loading-spinner" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+      <p id="loading-text"></p>
+    </div>
+  </div>
+
   <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-description">
-    <h2 id="confirm-title">Сохранить изменения?</h2>
-    <p id="confirm-description">Показанные тексты заменят «Что нового» в черновике.</p>
-    <div class="dialog-actions"><button id="cancel-save" class="secondary" autofocus>Отмена</button><button id="confirm-save" class="save">Сохранить</button></div>
+    <h2 id="confirm-title" data-i18n="confirmTitle">Save changes?</h2>
+    <p id="confirm-description" data-i18n="confirmDescription">These texts will replace What’s New in the draft.</p>
+    <div class="dialog-actions"><button id="cancel-save" class="secondary" data-i18n="cancel" autofocus>Cancel</button><button id="confirm-save" class="save" data-i18n="save">Save</button></div>
   </dialog>
 </body>
 </html>

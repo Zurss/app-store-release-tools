@@ -1,9 +1,26 @@
 import { diffText } from './diff.js';
 import { makePrompt } from './prompt.js';
 import { localeName, localeLabel } from './locales.js';
+import { translate } from './web-i18n.js';
+import { translate as translateError } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
 const token = document.querySelector('meta[name="local-token"]').content;
+let language = document.querySelector('meta[name="app-language"]')?.content === 'ru' ? 'ru' : 'en';
+const languageSelect = $('language-select');
+const t = (key, values) => translate(language, key, values);
+const labelLocale = (code) => localeLabel(code, language);
+let notice = null;
+let currentPlan = null;
+let savedResult = null;
+let promptLocales = null;
+let generatedPrompt = '';
+let sourcesCache = [];
+let currentSourceId = null;
+let sourceRequest = 0;
+let selectionRevision = 0;
+let previewRequest = 0;
+let appsLoaded = false;
 const appSelect = $('app-select');
 const appPicker = $('app-picker');
 const appList = $('app-list');
@@ -18,6 +35,9 @@ const copyPrompt = $('copy-prompt');
 const previewButton = $('preview-button');
 const applyButton = $('apply-button');
 let busy = false;
+let loadingMessage = null;
+let loadingTimer = null;
+let focusedBeforeLoading = null;
 let planId = null;
 let promptContext = null;
 let promptRequest = 0;
@@ -26,14 +46,15 @@ async function request(path, body = {}) {
   const response = await fetch(`/api/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Local-Token': token },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, language }),
   });
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error || 'Не удалось выполнить запрос.');
+  if (!response.ok) throw Object.assign(new Error(result.error || t('requestFailed')), { errorKey: result.errorKey, errorParams: result.errorParams });
   return result;
 }
 
 function setBusy(value, text) {
+  const wasBusy = busy;
   busy = value;
   appSelect.disabled = value || appSelect.options.length <= 1;
   appPicker.disabled = appSelect.disabled;
@@ -47,17 +68,109 @@ function setBusy(value, text) {
   const sourceReady = sourceType.value === 'clipboard' ? !$('clipboard-field').hidden && clipboardInput.value.trim() : !$('source-field').hidden && sourceSelect.value;
   previewButton.disabled = value || !appSelect.value || !platformSelect.value || !sourceReady;
   applyButton.disabled = value || !planId;
-  if (text) showNotice(text);
+  if (value && text) {
+    loadingMessage = text;
+    $('loading-text').textContent = t(text);
+    showNotice('');
+  }
+  if (value && !wasBusy) {
+    loadingTimer = setTimeout(() => {
+      focusedBeforeLoading = document.activeElement;
+      $('topbar').inert = true;
+      $('main').inert = true;
+      $('loading-overlay').hidden = false;
+    }, 250);
+  } else if (!value) {
+    clearTimeout(loadingTimer);
+    loadingTimer = null;
+    $('loading-overlay').hidden = true;
+    $('topbar').inert = false;
+    $('main').inert = false;
+    if (focusedBeforeLoading?.isConnected && !focusedBeforeLoading.disabled) focusedBeforeLoading.focus({ preventScroll: true });
+    focusedBeforeLoading = null;
+    loadingMessage = null;
+  }
 }
 
-function showNotice(text, error = false) {
-  $('notice').hidden = !text;
-  $('notice').className = error ? 'notice error' : 'notice';
-  $('notice').textContent = text || '';
+function errorText(error) {
+  if (error.errors) return error.errors.map(errorText).join(' ');
+  if (error.errorKey) return translateError(language, error.errorKey, error.errorParams);
+  const text = error.message || error.error;
+  return text ? t('serverError', { error: text }) : t('requestFailed');
 }
+
+function showNotice(message, error = false, values = {}) {
+  notice = message ? { message, error, values } : null;
+  renderNotice();
+}
+
+function renderNotice() {
+  $('notice').hidden = !notice;
+  $('notice').className = notice?.error ? 'notice error' : 'notice';
+  $('notice').textContent = !notice ? '' : typeof notice.message === 'string'
+    ? t(notice.message, notice.values)
+    : notice.message.retry ? t('retryPreview', { error: errorText(notice.message) }) : errorText(notice.message);
+}
+
+function fillSources() {
+  const selected = sourceSelect.value;
+  fillSelect(sourceSelect, t('choosePublished'), sourcesCache, (v) => `${v.version}${v.id === currentSourceId ? t('current') : ''}${v.createdDate ? t('created', { date: v.createdDate.slice(0, 10) }) : ''}`);
+  sourceSelect.value = selected;
+}
+
+function renderResult() {
+  if (!savedResult) return;
+  $('result').textContent = savedResult.failed.length
+    ? t('partialSave', { count: savedResult.updated, failures: savedResult.failed.map((f) => `${labelLocale(f.locale)} — ${errorText(f)}`).join('; ') })
+    : t('saved', { count: savedResult.updated });
+}
+
+function renderLanguage() {
+  document.documentElement.lang = language;
+  languageSelect.value = language;
+  for (const element of document.querySelectorAll('[data-i18n]')) element.textContent = t(element.getAttribute('data-i18n'));
+  for (const element of document.querySelectorAll('[data-i18n-aria]')) element.setAttribute('aria-label', t(element.getAttribute('data-i18n-aria')));
+  for (const element of document.querySelectorAll('[data-i18n-placeholder]')) element.placeholder = t(element.getAttribute('data-i18n-placeholder'));
+  if (appSelect.options[0]) appSelect.options[0].text = t(appsLoaded ? 'chooseApp' : 'loading');
+  if (platformSelect.options[0]) platformSelect.options[0].text = t(appSelect.value ? 'choosePlatform' : 'chooseApp');
+  fillSources();
+  if (!appSelect.value) syncAppPicker();
+  if (promptLocales && promptOutput.value === generatedPrompt) {
+    generatedPrompt = makePrompt(promptLocales, language);
+    promptOutput.value = generatedPrompt;
+  }
+  if (currentPlan && !$('preview').hidden) renderPlan(currentPlan);
+  renderResult();
+  renderNotice();
+  if (loadingMessage) $('loading-text').textContent = t(loadingMessage);
+}
+
+languageSelect.addEventListener('change', async () => {
+  const previous = language;
+  const next = languageSelect.value;
+  if (!['en', 'ru'].includes(next) || next === previous || languageSelect.disabled) {
+    languageSelect.value = language;
+    return;
+  }
+  language = next;
+  renderLanguage();
+  languageSelect.disabled = true;
+  try {
+    await request('language');
+  } catch {
+    language = previous;
+    renderLanguage();
+    showNotice('preferenceFailed', true);
+  } finally {
+    languageSelect.disabled = false;
+  }
+});
 
 function resetPreview() {
+  previewRequest += 1;
   planId = null;
+  currentPlan = null;
+  savedResult = null;
   $('preview').hidden = true;
   $('result').hidden = true;
   $('changes').replaceChildren();
@@ -100,7 +213,7 @@ function appCopy(app) {
 function syncAppPicker() {
   const app = apps.find((app) => app.id === appSelect.value);
   $('app-picker-icon').replaceChildren(...(app ? [appIcon(app)] : []));
-  $('app-picker-value').replaceChildren(...(app ? [appCopy(app)] : [document.createTextNode('Выберите приложение')]));
+  $('app-picker-value').replaceChildren(...(app ? [appCopy(app)] : [document.createTextNode(t(appsLoaded ? 'chooseApp' : 'loading'))]));
   for (let i = 0; i < apps.length; i += 1) {
     appList.children[i].setAttribute('aria-selected', String(apps[i].id === appSelect.value));
   }
@@ -171,7 +284,7 @@ function textCell(parts, tag, locale) {
   const text = document.createElement('p');
   text.dir = 'auto';
   text.lang = locale;
-  if (!parts.length) text.textContent = '(пусто)';
+  if (!parts.length) text.textContent = t('empty');
   for (const part of parts) {
     if (!part.changed) text.append(document.createTextNode(part.text));
     else {
@@ -185,39 +298,38 @@ function textCell(parts, tag, locale) {
 }
 
 function renderPlan(plan) {
-  planId = plan.changes.length ? plan.planId : null;
-  $('source-version').textContent = plan.source;
+  $('source-version').textContent = plan.sourceType === 'clipboard' ? t('clipboardSource') : plan.source;
   $('draft-version').textContent = plan.draft;
   $('change-count').textContent = String(plan.changes.length);
-  $('list-count').textContent = `Изменений: ${plan.changes.length}`;
+  $('list-count').textContent = t('changes', { count: plan.changes.length });
   $('comparison-table').hidden = !plan.changes.length;
   const approximate = [];
   $('changes').replaceChildren(...plan.changes.map((change) => {
     const row = document.createElement('tr');
     const title = document.createElement('th');
     title.scope = 'row';
-    title.textContent = localeName(change.locale);
+    title.textContent = localeName(change.locale, language);
     const diff = diffText(change.previous, change.text);
     if (diff.approximate) approximate.push(change.locale);
     row.append(title, textCell(diff.before, 'del', change.locale), textCell(diff.after, 'ins', change.locale));
     return row;
   }));
   const messages = [];
-  if (approximate.length) messages.push(`Крупная подсветка из-за длины текста: ${approximate.map(localeLabel).join(', ')}. Сравните тексты вручную.`);
-  if (plan.unchanged.length) messages.push(`Без изменений: ${plan.unchanged.map(localeLabel).join(', ')}.`);
-  if (plan.missing.length) messages.push(`Нет текста ${plan.sourceType === 'clipboard' ? 'в таблице' : 'в опубликованной версии'}: ${plan.missing.map(localeLabel).join(', ')}.`);
-  if (plan.sourceOnly.length) messages.push(`Нет языка в черновике: ${plan.sourceOnly.map(localeLabel).join(', ')}.`);
+  if (approximate.length) messages.push(t('approximate', { locales: approximate.map(labelLocale).join(', ') }));
+  if (plan.unchanged.length) messages.push(t('unchanged', { locales: plan.unchanged.map(labelLocale).join(', ') }));
+  if (plan.missing.length) messages.push(t(plan.sourceType === 'clipboard' ? 'missingTable' : 'missingVersion', { locales: plan.missing.map(labelLocale).join(', ') }));
+  if (plan.sourceOnly.length) messages.push(t('sourceOnly', { locales: plan.sourceOnly.map(labelLocale).join(', ') }));
   $('skipped').textContent = messages.join('\n');
   $('skipped').hidden = !messages.length;
   $('preview').hidden = false;
-  if (!plan.changes.length) showNotice('Изменения не требуются.');
 }
 
 async function loadApps() {
-  setBusy(true, 'Получаем приложения из App Store Connect…');
+  setBusy(true, 'loadingApps');
   try {
     ({ apps } = await request('apps'));
-    fillSelect(appSelect, 'Выберите приложение', apps, (a) => `${a.name} (${a.bundleId})`);
+    appsLoaded = true;
+    fillSelect(appSelect, t('chooseApp'), apps, (a) => `${a.name} (${a.bundleId})`);
     appList.replaceChildren(...apps.map((app, index) => {
       const option = document.createElement('div');
       option.id = `app-option-${index}`;
@@ -228,27 +340,36 @@ async function loadApps() {
       return option;
     }));
     syncAppPicker();
-    showNotice(apps.length ? '' : 'Приложения не найдены. Проверьте доступ к App Store Connect.', !apps.length);
+    showNotice(apps.length ? '' : 'noApps', !apps.length);
   } catch (error) {
-    showNotice(error.message, true);
+    showNotice(error, true);
   } finally {
     setBusy(false);
   }
 }
 
 async function loadSources() {
+  const requestId = ++sourceRequest;
+  const context = `${appSelect.value}:${platformSelect.value}:${sourceType.value}`;
   $('source-field').hidden = true;
-  fillSelect(sourceSelect, 'Выберите опубликованную версию', [], (v) => v.version);
+  sourcesCache = [];
+  currentSourceId = null;
+  fillSources();
   const { sources, sourceId } = await request('sources', { appId: appSelect.value, platform: platformSelect.value });
-  fillSelect(sourceSelect, 'Выберите опубликованную версию', sources, (v) => `${v.version}${v.id === sourceId ? ' — текущая' : ''}${v.createdDate ? ` — создана ${v.createdDate.slice(0, 10)}` : ''}`);
+  if (requestId !== sourceRequest || context !== `${appSelect.value}:${platformSelect.value}:${sourceType.value}`) return;
+  sourcesCache = sources;
+  currentSourceId = sourceId;
+  fillSources();
   sourceSelect.value = sourceId || '';
   $('source-field').hidden = false;
-  showNotice(sourceId ? '' : 'Не удалось определить текущую версию. Выберите её из списка.');
+  showNotice(sourceId ? '' : 'unknownCurrent');
 }
 
 function resetPrompt() {
   promptRequest += 1;
   promptContext = null;
+  promptLocales = null;
+  generatedPrompt = '';
   promptOutput.value = '';
   $('prompt-field').hidden = true;
   $('prompt-details').open = false;
@@ -261,7 +382,9 @@ async function loadPrompt() {
   const requestId = ++promptRequest;
   const { locales } = await request('locales', { appId: appSelect.value, platform: platformSelect.value });
   if (requestId !== promptRequest || context !== `${appSelect.value}:${platformSelect.value}`) return;
-  promptOutput.value = makePrompt(locales);
+  generatedPrompt = makePrompt(locales, language);
+  promptLocales = locales;
+  promptOutput.value = generatedPrompt;
   promptContext = context;
 }
 
@@ -276,55 +399,63 @@ async function activateSource() {
   if (clipboard) showNotice('');
   const results = await Promise.allSettled([loadPrompt(), ...(clipboard ? [] : [loadSources()])]);
   const errors = results.filter((result) => result.status === 'rejected');
-  if (errors.length) throw new Error(errors.map((result) => result.reason.message).join(' '));
+  if (errors.length) throw { errors: errors.map((result) => result.reason) };
 }
 
 appSelect.addEventListener('change', async () => {
+  const revision = ++selectionRevision;
+  sourceRequest += 1;
   syncAppPicker();
   resetPreview();
   resetPrompt();
   $('source-field').hidden = true;
   $('clipboard-field').hidden = true;
   $('source-type-field').hidden = true;
-  fillSelect(platformSelect, 'Выберите платформу', [], (p) => p.id);
+  fillSelect(platformSelect, t('choosePlatform'), [], (p) => p.id);
   if (!appSelect.value) { showNotice(''); setBusy(false); return; }
-  setBusy(true, 'Получаем доступные платформы…');
+  setBusy(true, 'loadingPlatforms');
   try {
     const { platforms } = await request('versions', { appId: appSelect.value });
-    fillSelect(platformSelect, 'Выберите платформу', platforms.map((id) => ({ id })), (p) => ({ IOS: 'iOS', MAC_OS: 'macOS', TV_OS: 'tvOS', VISION_OS: 'visionOS' }[p.id] || p.id));
+    if (revision !== selectionRevision) return;
+    fillSelect(platformSelect, t('choosePlatform'), platforms.map((id) => ({ id })), (p) => ({ IOS: 'iOS', MAC_OS: 'macOS', TV_OS: 'tvOS', VISION_OS: 'visionOS' }[p.id] || p.id));
     if (platforms.length === 1) {
       platformSelect.value = platforms[0];
+      setBusy(true, 'loadingSource');
       await activateSource();
     } else {
-      showNotice(platforms.length ? '' : 'Для приложения нет версий.', !platforms.length);
+      showNotice(platforms.length ? '' : 'noVersions', !platforms.length);
     }
   } catch (error) {
-    showNotice(error.message, true);
+    if (revision === selectionRevision) showNotice(error, true);
   } finally {
-    setBusy(false);
+    if (revision === selectionRevision) setBusy(false);
   }
 });
 
 platformSelect.addEventListener('change', async () => {
+  const revision = ++selectionRevision;
+  sourceRequest += 1;
   resetPreview();
   resetPrompt();
   $('source-field').hidden = true;
   $('clipboard-field').hidden = true;
   $('source-type-field').hidden = true;
   if (!platformSelect.value) { showNotice(''); setBusy(false); return; }
-  setBusy(true, 'Подготавливаем источник…');
+  setBusy(true, 'loadingSource');
   try {
     await activateSource();
   } catch (error) {
-    showNotice(error.message, true);
+    if (revision === selectionRevision) showNotice(error, true);
   } finally {
-    setBusy(false);
+    if (revision === selectionRevision) setBusy(false);
   }
 });
 sourceType.addEventListener('change', async () => {
+  const revision = ++selectionRevision;
+  sourceRequest += 1;
   resetPreview();
-  setBusy(true);
-  try { await activateSource(); } catch (error) { showNotice(error.message, true); } finally { setBusy(false); }
+  setBusy(true, 'loadingSource');
+  try { await activateSource(); } catch (error) { if (revision === selectionRevision) showNotice(error, true); } finally { if (revision === selectionRevision) setBusy(false); }
 });
 sourceSelect.addEventListener('change', () => { resetPreview(); showNotice(''); setBusy(false); });
 clipboardInput.addEventListener('input', () => { resetPreview(); showNotice(''); setBusy(false); });
@@ -333,33 +464,40 @@ copyPrompt.addEventListener('click', async () => {
   if (copyPrompt.disabled) return;
   try {
     await navigator.clipboard.writeText(promptOutput.value);
-    showNotice('Промпт скопирован.');
+    showNotice('copied');
   } catch {
     $('prompt-details').open = true;
     promptOutput.focus();
     promptOutput.select();
-    showNotice('Скопируйте выделенный промпт вручную.');
+    showNotice('copyManually');
   }
 });
 
 previewButton.addEventListener('click', async () => {
   resetPreview();
-  setBusy(true, 'Получаем версии и тексты…');
+  const requestId = previewRequest;
+  setBusy(true, 'loadingPreview');
   try {
     const source = sourceType.value === 'clipboard' ? { sourceType: 'clipboard', clipboard: clipboardInput.value } : { sourceId: sourceSelect.value };
     const data = await request('preview', { appId: appSelect.value, platform: platformSelect.value, ...source });
+    if (requestId !== previewRequest) return;
     showNotice('');
     if (data.sources) {
-      fillSelect(sourceSelect, 'Выберите опубликованную версию', data.sources, (v) => `${v.version}${v.createdDate ? ` — создана ${v.createdDate.slice(0, 10)}` : ''}`);
+      sourcesCache = data.sources;
+      currentSourceId = null;
+      fillSources();
       $('source-field').hidden = false;
-      showNotice('Не удалось определить опубликованную версию автоматически. Выберите её из списка.');
+      showNotice('chooseSource');
     } else {
+      currentPlan = data;
+      planId = data.changes.length ? data.planId : null;
       renderPlan(data);
+      if (!data.changes.length) showNotice('noChanges');
     }
   } catch (error) {
-    showNotice(error.message, true);
+    if (requestId === previewRequest) showNotice(error, true);
   } finally {
-    setBusy(false);
+    if (requestId === previewRequest) setBusy(false);
   }
 });
 
@@ -368,23 +506,24 @@ $('cancel-save').addEventListener('click', () => $('confirm-dialog').close());
 $('confirm-save').addEventListener('click', async () => {
   $('confirm-dialog').close();
   if (!planId) return;
-  setBusy(true, 'Сохраняем тексты в App Store Connect…');
+  setBusy(true, 'saving');
   try {
     const result = await request('apply', { planId });
     planId = null;
     $('preview').hidden = true;
     $('result').hidden = false;
     $('result').className = result.failed.length ? 'result error' : 'result';
-    $('result').textContent = result.failed.length
-      ? `Сохранено: ${result.updated}. Не удалось сохранить: ${result.failed.map((f) => `${localeLabel(f.locale)} — ${f.error}`).join('; ')}. Подготовьте сравнение заново.`
-      : `Готово. Сохранено языков: ${result.updated}.`;
+    currentPlan = null;
+    savedResult = result;
+    renderResult();
     showNotice('');
   } catch (error) {
     planId = null;
-    showNotice(`${error.message} Подготовьте сравнение заново.`, true);
+    showNotice(Object.assign(error, { retry: true }), true);
   } finally {
     setBusy(false);
   }
 });
 
+renderLanguage();
 loadApps();

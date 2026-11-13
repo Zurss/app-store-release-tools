@@ -7,7 +7,7 @@ import { createWebServer } from '../src/web-server.js';
 const makeVersion = (id, state, number) => ({ id, attributes: { platform: 'IOS', appVersionState: state, versionString: number } });
 const makeLocale = (id, locale, text) => ({ id, attributes: { locale, whatsNew: text } });
 
-async function fixture({ published = true, multipleEnglish = false, multipleFrench = false, failLog = false } = {}) {
+async function fixture({ published = true, multipleEnglish = false, multipleFrench = false, failLog = false, language = 'ru', preferencesPath } = {}) {
   const live = makeVersion('live', 'READY_FOR_DISTRIBUTION', '1.0');
   const older = makeVersion('older', 'READY_FOR_DISTRIBUTION', '0.9');
   const draft = makeVersion('draft', 'PREPARE_FOR_SUBMISSION', '1.1');
@@ -25,7 +25,7 @@ async function fixture({ published = true, multipleEnglish = false, multipleFren
   const server = createWebServer(api, async () => live, (message) => {
     if (failLog) throw new Error('Журнал недоступен');
     logs.push(message);
-  });
+  }, { language, preferencesPath });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -369,7 +369,7 @@ test('ошибка CDN даёт недоступную иконку без ра�
   assert.equal((await f.call('apps')).status, 200);
   const image = await iconGet(f);
   assert.equal(image.status, 404);
-  assert.deepEqual(await image.json(), { error: 'Иконка недоступна.' });
+  assert.equal((await image.json()).error, 'Иконка недоступна.');
   assert.equal((await f.call('versions', { appId: '123' })).status, 200);
 });
 
@@ -402,3 +402,94 @@ test('обновление списка отзывает доступ к ста�
   assert.equal((await image).status, 404);
   assert.equal((await iconGet(f)).status, 404);
 });
+
+async function languageFixture(t) {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = await mkdtemp(join(tmpdir(), 'release-web-language-'));
+  const preferencesPath = join(dir, '.release-tools-preferences.json');
+  const f = await fixture({ language: null, preferencesPath });
+  t.after(async () => { f.server.close(); await rm(dir, { recursive: true, force: true }); });
+  return { ...f, preferencesPath };
+}
+
+test('web and CLI share persistent language; a language change preserves a prepared plan', async (t) => {
+  const { configureLanguage, readLanguage } = await import('../src/preferences.js');
+  const f = await languageFixture(t);
+  const html = () => fetch(f.base).then((response) => response.text());
+  assert.match(await html(), /name="app-language" content="en"/);
+  await f.call('apps');
+  const preview = await f.call('preview', { appId: '123', platform: 'IOS' });
+  assert.deepEqual(await f.call('language', { language: 'ru' }), { status: 200, body: { language: 'ru' } });
+  assert.equal(await configureLanguage([], f.preferencesPath), 'ru');
+  assert.match(await html(), /name="app-language" content="ru"/);
+  assert.equal((await f.call('apply', { planId: preview.body.planId })).body.updated, 1);
+  await configureLanguage(['--lang', 'en'], f.preferencesPath);
+  assert.match(await html(), /name="app-language" content="en"/);
+  assert.equal((await f.call('apply', { planId: preview.body.planId })).body.error, 'The preview is stale. Prepare a new preview.');
+  assert.equal(await readLanguage(f.preferencesPath), 'en');
+});
+
+test('language endpoint retains origin/token protections and validates before persisting', async (t) => {
+  const { readLanguage } = await import('../src/preferences.js');
+  const f = await languageFixture(t);
+  assert.equal((await f.call('language', { language: 'ru' }, { origin: 'https://evil.example' })).status, 403);
+  assert.equal((await f.call('language', { language: 'ru' }, { token: 'wrong' })).status, 403);
+  for (const body of [{}, { language: 'de' }, { language: '../ru' }, null, []]) {
+    assert.equal((await f.call('language', body)).status, 400);
+  }
+  assert.equal(await readLanguage(f.preferencesPath), 'en');
+  assert.equal((await f.call('language', { language: 'ru' })).status, 200);
+  for (const file of ['i18n.js', 'web-i18n.js']) assert.equal((await fetch(`${f.base}/${file}`)).status, 200);
+});
+
+test('concurrent per-request languages isolate delayed errors and do not overwrite preferences', async (t) => {
+  const { AppError } = await import('../src/i18n.js');
+  const { readLanguage } = await import('../src/preferences.js');
+  const f = await languageFixture(t);
+  let count = 0;
+  let release;
+  let started;
+  const ready = new Promise((resolve) => { started = resolve; });
+  const wait = new Promise((resolve) => { release = resolve; });
+  f.api.apps = async () => {
+    if (++count === 1) { started(); await wait; }
+    else release();
+    throw new AppError('emptyDraft');
+  };
+  const russian = f.call('apps', { language: 'ru' });
+  await ready;
+  const english = f.call('apps', { language: 'en' });
+  const [ru, en] = await Promise.all([russian, english]);
+  assert.equal(ru.body.error, 'В черновике нет локализаций.');
+  assert.equal(en.body.error, 'The draft has no localizations.');
+  assert.equal(ru.body.errorKey, 'emptyDraft');
+  assert.equal(en.body.errorKey, 'emptyDraft');
+  assert.equal(await readLanguage(f.preferencesPath), 'en');
+});
+
+for (const language of ['en', 'ru']) {
+  test(`stale plans and partial write failures remain safe (${language})`, async (t) => {
+    const f = await fixture({ language, multipleEnglish: true });
+    t.after(() => f.server.close());
+    await f.call('apps', { language });
+    const preview = await f.call('preview', { appId: '123', platform: 'IOS', sourceType: 'clipboard', clipboard: 'Language | Text\nEnglish (United States) | New\nRussian | Новое', language });
+    f.setDraft('Changed');
+    const stale = await f.call('apply', { planId: preview.body.planId, language });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.errorKey, 'draftChanged');
+    assert.deepEqual(f.writes, []);
+    const next = await f.call('preview', { appId: '123', platform: 'IOS', sourceType: 'clipboard', clipboard: 'Language | Text\nEnglish (United States) | New\nRussian | Новое', language });
+    f.api.updateWhatsNew = async (id, text) => {
+      if (id === 'en-us') throw new Error('APPLE_UNMODIFIED_DETAIL');
+      f.writes.push({ id, text });
+    };
+    const result = await f.call('apply', { planId: next.body.planId, language });
+    assert.equal(result.body.updated, 1);
+    assert.deepEqual(result.body.failed, [{ locale: 'en-US', error: 'APPLE_UNMODIFIED_DETAIL' }]);
+    assert.deepEqual(f.writes, [{ id: 'target', text: 'Новое' }]);
+    assert.doesNotMatch(f.logs.join('\n'), /APPLE_UNMODIFIED_DETAIL|Новое/);
+    assert.match(f.logs.join('\n'), language === 'en' ? /Failed: 1 \(English \(United States\)\)/ : /Не удалось: 1 \(английский \(США\)\)/);
+  });
+}

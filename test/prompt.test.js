@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makePrompt } from '../public/prompt.js';
+import { makePrompt as makePromptLanguage } from '../public/prompt.js';
 
 test('промпт использует только понятные названия языков', () => {
   const prompt = makePrompt(['en-US', 'fr-FR', 'fr-CA']);
@@ -13,3 +13,5 @@ test('промпт не выдаёт неизвестные или неодно�
     assert.throws(() => makePrompt(locales), /Не удалось однозначно определить названия языков/);
   }
 });
+
+function makePrompt(locales) { return makePromptLanguage(locales, 'ru'); }

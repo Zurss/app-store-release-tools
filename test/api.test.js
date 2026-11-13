@@ -25,7 +25,7 @@ test('читает все страницы, не отправляя токен �
       : { data: [{ id: '2' }], links: {} }), { status: 200 });
   });
   assert.deepEqual(await api.apps(), [{ id: '1' }, { id: '2' }]);
-  await assert.rejects(api.request('https://example.com/'), /Недопустимый адрес/);
+  await assert.rejects(api.request('https://example.com/'), /Invalid API address/);
   assert.equal(requests.length, 2);
 });
 
@@ -42,7 +42,7 @@ test('PATCH содержит только whatsNew и ошибки Apple дох�
 
 test('добавляет понятную подсказку при ошибке прав доступа', async () => {
   const api = new AppStoreApi(config, async () => new Response('{}', { status: 403 }));
-  await assert.rejects(api.apps(), /403.*Проверьте права ключа и доступ к приложению/);
+  await assert.rejects(api.apps(), /403.*Check key permissions and app access/);
 });
 
 const iconTemplate = 'https://is1-ssl.mzstatic.com/image/thumb/Purple123/icon.png/{w}x{h}bb.{f}';
@@ -129,7 +129,7 @@ test('иконка загружается с Apple CDN без bearer token и б
     assert.equal(options.redirect, 'error');
     return new Response(null, { status: 302, headers: { Location: 'http://127.0.0.1/secret' } });
   });
-  await assert.rejects(redirectApi.appIcon(address), /Иконка недоступна/);
+  await assert.rejects(redirectApi.appIcon(address), /Icon unavailable/);
 });
 
 test('блокирует произвольные URL до сетевого запроса', async () => {
@@ -149,4 +149,22 @@ test('не отдаёт ошибки CDN, HTML, SVG, повреждённые и
   }
   const api = new AppStoreApi(config, async () => { throw new Error('Timeout'); });
   await assert.rejects(api.appIcon(address), /Timeout/);
+});
+
+test('localizes only the HTTP wrapper and hints; exact Apple details survive language changes', async () => {
+  const { withLanguage, errorData } = await import('../src/i18n.js');
+  const { translate } = await import('../public/i18n.js');
+  const rawDetail = 'Original Apple detail: Что нового / What’s New';
+  const api = new AppStoreApi(config, async () => new Response(JSON.stringify({ errors: [{ code: 'FORBIDDEN', detail: rawDetail }] }), { status: 403 }));
+  for (const language of ['en', 'ru']) {
+    await assert.rejects(withLanguage(language, () => api.apps()), (error) => {
+      const data = withLanguage(language, () => errorData(error));
+      assert.equal(data.errorKey, 'apple403');
+      assert.ok(data.error.includes(rawDetail));
+      const other = translate(language === 'en' ? 'ru' : 'en', data.errorKey, data.errorParams);
+      assert.ok(other.includes(rawDetail));
+      assert.match(data.error, language === 'en' ? /Check key permissions/ : /Проверьте права ключа/);
+      return true;
+    });
+  }
 });

@@ -1,0 +1,26 @@
+name: Bug report
+description: Report a reproducible problem. English and Russian are welcome.
+body:
+  - type: markdown
+    attributes:
+      value: "For vulnerabilities, see SECURITY.md. Do not include credentials, configuration files, private app data, or raw logs. Use invented values and sanitized excerpts only."
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and reproduction
+      description: What happened, and how can it be reproduced with invented data?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Commit or version, Node.js version, operating system, and browser or terminal.
+    validations:
+      required: true
